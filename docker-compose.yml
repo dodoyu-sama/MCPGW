@@ -1,0 +1,54 @@
+version: "3.9"
+
+# Default profile (sqlite): docker compose up --build
+# Postgres profile:        docker compose --profile postgres up --build
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mcpgw
+      POSTGRES_PASSWORD: mcpgw
+      POSTGRES_DB: mcpgw
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcpgw -d mcpgw"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    profiles: ["postgres"]
+
+  mcpgw:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    # Override the upstream to point at your own MCP server.
+    # Mount your upstream server into the container and adjust the command.
+    command:
+      - "mcpgw"
+      - "--config"
+      - "/etc/mcpgw/config.docker.yaml"
+      - "--upstream"
+      - "node"
+      - "/upstream/server.js"
+
+  mcpgw-postgres:
+    build: .
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - "mcpgw"
+      - "--config"
+      - "/etc/mcpgw/config.docker-postgres.yaml"
+      - "--upstream"
+      - "node"
+      - "/upstream/server.js"
+    profiles: ["postgres"]
+
+volumes:
+  pgdata:

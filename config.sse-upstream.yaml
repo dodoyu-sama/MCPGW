@@ -1,0 +1,44 @@
+server:
+  client_id: "default"
+
+transport:
+  client: stdio        # MCPGW talks to the MCP client over stdio
+  upstream: sse        # MCPGW reaches the remote server over HTTP/SSE
+  upstream_url: "http://localhost:18080/sse"
+  listen: ""
+
+audit:
+  enabled: true
+  driver: sqlite
+  dsn: ./mcpgw-sse-up.db
+
+masking:
+  enabled: true
+  rules:
+    - name: email
+      patterns:
+        - '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'
+      mask_char: "***@***.com"
+    - name: credit_card
+      patterns:
+        - '\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b'
+      mask_char: "****-****-****-****"
+    - name: api_key
+      patterns:
+        - '\b(?:sk-|pk-|api[_-]?key|token)[-_A-Za-z0-9]{10,}\b'
+      mask_char: "****"
+    - name: id_card_cn
+      patterns:
+        - '\b\d{17}[\dXx]\b'
+      mask_char: "*****************"
+    - name: sensitive_fields
+      fields: [password, passwd, pwd, secret, token, apiKey, api_key, cvv, card_cvv]
+      mask_char: "****"
+
+rate_limit:
+  enabled: false
+
+admin:
+  enabled: true
+  port: 8090
+  token: "change-me"

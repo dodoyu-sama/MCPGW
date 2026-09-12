@@ -1,0 +1,42 @@
+server:
+  client_id: "default"
+  # upstream: ["node", "examples/echo-server/server.js"]   # 也可在此写死上游命令
+
+audit:
+  enabled: true
+  driver: postgres
+  dsn: "postgres://mcpgw:mcpgw@localhost:5432/mcpgw?sslmode=disable"
+  # 建库示例：createdb mcpgw  或让 MCPGW 在 migrate() 里自动建表
+
+masking:
+  enabled: true
+  rules:
+    - name: email
+      patterns:
+        - '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'
+      mask_char: "***@***.com"
+    - name: credit_card
+      patterns:
+        - '\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b'
+      mask_char: "****-****-****-****"
+    - name: api_key
+      patterns:
+        - '\b(?:sk-|pk-|api[_-]?key|token)[-_A-Za-z0-9]{10,}\b'
+      mask_char: "****"
+    - name: id_card_cn
+      patterns:
+        - '\b\d{17}[\dXx]\b'
+      mask_char: "*****************"
+    - name: sensitive_fields
+      fields: [password, passwd, pwd, secret, token, apiKey, api_key, cvv, card_cvv]
+      mask_char: "****"
+
+rate_limit:
+  enabled: true    # 按 client_id 限流（令牌桶 QPS + 日配额）
+  qps: 10
+  daily_quota: 10000
+
+admin:
+  enabled: true
+  port: 8080
+  token: "change-me"

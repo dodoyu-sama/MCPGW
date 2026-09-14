@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/dodoyu-sama/mcpgw/internal/audit"
-	"github.com/dodoyu-sama/mcpgw/web"
+	"github.com/dodoyu-sama/mcp-arc/internal/audit"
+	"github.com/dodoyu-sama/mcp-arc/web"
 )
 
 // Replayer re-issues a previously recorded tools/call to the upstream server.
@@ -22,10 +22,11 @@ type Server struct {
 	store    audit.Store
 	token    string
 	replayer Replayer
+	rules    RuleManager
 }
 
-func New(store audit.Store, token string, replayer Replayer) *Server {
-	return &Server{store: store, token: token, replayer: replayer}
+func New(store audit.Store, token string, replayer Replayer, rules RuleManager) *Server {
+	return &Server{store: store, token: token, replayer: replayer, rules: rules}
 }
 
 func (s *Server) Start(port int) error {
@@ -33,6 +34,9 @@ func (s *Server) Start(port int) error {
 	mux.HandleFunc("/api/logs", s.auth(s.handleLogs))
 	mux.HandleFunc("/api/stats", s.auth(s.handleStats))
 	mux.HandleFunc("/api/replay", s.auth(s.handleReplay))
+	mux.HandleFunc("/api/export", s.auth(s.handleExport))
+	mux.HandleFunc("/api/rules", s.auth(s.handleRules))
+	mux.HandleFunc("/api/rules/{id}", s.auth(s.handleRuleByID))
 
 	// Serve the embedded web console (compiled into the binary by `npm run build`).
 	sub, err := fs.Sub(web.DistFS, "dist")

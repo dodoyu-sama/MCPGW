@@ -1,4 +1,4 @@
-// Minimal MCP stdio server (no SDK needed) used to smoke-test MCPGW.
+// Minimal MCP stdio server (no SDK needed) used to smoke-test MCP Arc.
 // It implements initialize / notifications/initialized / tools/list / tools/call.
 const readline = require('readline')
 
@@ -10,7 +10,7 @@ function send(obj) {
 
 const TOOLS = [{
   name: 'echo',
-  description: 'Echo back the arguments (demo tool for MCPGW)',
+  description: 'Echo back the arguments (demo tool for MCP Arc)',
   inputSchema: {
     type: 'object',
     properties: { message: { type: 'string' } },

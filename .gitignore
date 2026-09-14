@@ -1,6 +1,5 @@
-# build artifacts
-/mcpgw
-mcpgw
+# build artifacts (anchored to repo root — a bare `mcp-arc` would also match cmd/mcp-arc/)
+/mcp-arc
 
 # runtime / data dirs (docker volume mount, local sqlite audit db)
 data/

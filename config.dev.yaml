@@ -3,14 +3,14 @@ server:
   upstream: ["node", "examples/echo-server/server.js"]   # gateway mode: spawn the real MCP server as upstream
 
 transport:
-  client: sse          # MCP clients connect to MCPGW over SSE
+  client: sse          # MCP clients connect to MCP Arc over SSE
   listen: ":8081"
   upstream: stdio
 
 audit:
   enabled: true
   driver: sqlite       # dev config uses sqlite so it runs without Postgres
-  dsn: ./mcpgw-dev.db
+  dsn: ./mcp-arc-dev.db
 
 masking:
   enabled: true
@@ -34,6 +34,16 @@ masking:
     - name: sensitive_fields
       fields: [password, passwd, pwd, secret, token, apiKey, api_key, cvv, card_cvv]
       mask_char: "****"
+
+# LLM 辅助脱敏（可选，默认关闭）。开起来需要一个 OpenAI 兼容端点：
+#   export MCP_ARC_LLM_API_KEY=sk-...
+#   export MCP_ARC_LLM_ENDPOINT=https://api.openai.com/v1
+llm:
+  enabled: false
+  model: "gpt-4o-mini"
+  timeout_ms: 3000
+  max_bytes: 8192
+  apply_to_result: false
 
 rate_limit:
   enabled: true

@@ -1,6 +1,6 @@
-# Contributing to MCPGW
+# Contributing to MCP Arc
 
-Thanks for your interest in improving MCPGW! This guide covers local setup,
+Thanks for your interest in improving MCP Arc! This guide covers local setup,
 the build/test workflow, and how the repo is laid out.
 
 ## Prerequisites
@@ -13,23 +13,29 @@ the build/test workflow, and how the repo is laid out.
 ## Build & test
 
 ```bash
-make build     # builds web/dist, then compiles ./mcpgw
+make build     # builds web/dist, then compiles ./mcp-arc
 make run       # build + run the dev gateway (config.dev.yaml, SSE on :8081)
 make test      # go test ./...
 make clean     # remove the binary and web/dist
 ```
 
-Run the gateway without rebuilding the frontend (console is embedded):
+Tests cover the parts that are easy to get subtly wrong and hard to see in a
+live session: masking path resolution (`internal/mask`), LLM response parsing,
+caching and the fail-open breaker (`internal/llm`), rule seeding / reload /
+validation (`internal/proxy`), and rule-list encoding (`internal/audit`).
+Transports are exercised manually — they are the thin, protocol-specific edge.
+
+Run the proxy without rebuilding the frontend (console is embedded):
 
 ```bash
-./mcpgw --config config.dev.yaml
+./mcp-arc --config config.dev.yaml
 # open http://localhost:8080
 ```
 
 Live frontend development (Vite HMR on :5173, proxies `/api` → `:8080`):
 
 ```bash
-./mcpgw --config config.dev.yaml &   # gateway + admin API
+./mcp-arc --config config.dev.yaml &   # proxy + admin API
 cd web && npm run dev
 ```
 
@@ -37,27 +43,49 @@ cd web && npm run dev
 
 ```bash
 docker compose up --build                              # SQLite (default), :8080
-docker compose --profile postgres up --build           # PostgreSQL, gateway :8081
+docker compose --profile postgres up --build           # PostgreSQL, proxy :8081
 ```
 
 ## Code layout
 
 ```
-cmd/mcpgw/         entrypoint (flag parsing, wiring)
-internal/config/   YAML config + env overrides + defaults
-internal/proxy/    stdio/SSE transport, session routing, request/response passthrough
-internal/audit/    audit store (SQLite + PostgreSQL), CallRecord model, migrate()
-internal/mask/     regex + field-name masking presets and engine
+cmd/mcp-arc/       entrypoint (flag parsing, wiring)
+internal/transport/  stdio / SSE transports — the ONLY place that knows wire formats
+internal/proxy/      transport-agnostic relay: session routing, id rewrite, correlation
+                     protocol.go = the only MCP-specific knowledge in the governance layer
+                     rules.go    = rule seeding, hot reload, CRUD
+internal/audit/      store (SQLite + PostgreSQL): calls + mask_rules tables, migrate()
+internal/mask/       masking engine: static rules, hot reload, Detector hook
+internal/llm/        optional second-pass detector (OpenAI-compatible), cache + fail-open
 internal/ratelimit/  per-client_id token bucket + daily quota
-internal/admin/    REST API + embedded web console (web/embed.go)
-web/               Vue3 dashboard (built into the binary via //go:embed)
+internal/admin/      REST API + embedded web console (web/embed.go)
+internal/config/     YAML config + env overrides + defaults
+web/                 Vue3 dashboard (built into the binary via //go:embed)
 ```
+
+Masking rules and audit records share one `audit.Store`, so both SQLite and
+PostgreSQL backends implement call *and* rule persistence over a single
+connection. New backends must satisfy the full `Store` interface (there are
+compile-time assertions in both `sqlite.go` and `postgres.go`).
+
+## Design constraint: stay above the protocol
+
+MCP Arc's core governance logic must remain **decoupled from MCP protocol
+internals**. It is built on top of the transport layer (stdio / SSE) and only
+knows the `tools/call` method name and its params shape.
+
+When adding features:
+
+- Put wire-format knowledge in `internal/transport/`, never in `proxy`/`audit`/`mask`.
+- Match and correlate responses; don't parse protocol payloads to make decisions.
+- If a feature seems to require understanding MCP semantics, that's a signal to
+  push it down to transport or express it as a config rule instead.
 
 ## Configuration
 
 All behaviour is driven by a YAML config (see `config.yaml` for the full schema
-and defaults). `config.dev.yaml` / `config.postgres.yaml` / `config.sse*.yaml` are
-ready-to-run examples. Local overrides can live in `config.local.yaml` (gitignored).
+and defaults). `config.dev.yaml` / `config.postgres.yaml` / `config.sse-upstream.yaml`
+are ready-to-run examples. Local overrides can live in `config.local.yaml` (gitignored).
 
 Audit backend: set `audit.driver: sqlite` (default, `dsn` = file path) or
 `audit.driver: postgres` (`dsn` = Postgres connection URL).
@@ -66,7 +94,7 @@ Audit backend: set `audit.driver: sqlite` (default, `dsn` = file path) or
 
 - Run `gofmt -w` (or `go fmt ./...`) and `go vet ./...` before opening a PR.
 - Keep the single-binary, zero-external-dependency runtime promise: the web
-  console is embedded, and the gateway runs with just a config file.
+  console is embedded, and the proxy runs with just a config file.
 - Add/extend masking rules in `config.yaml` (`masking.rules`) rather than
   hardcoding them in callers.
 - Open an issue before large changes so we can align on design.

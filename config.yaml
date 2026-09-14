@@ -5,7 +5,7 @@ server:
 audit:
   enabled: true
   driver: sqlite                         # 也支持 "postgres"（见 config.postgres.yaml）
-  dsn: ./mcpgw.db
+  dsn: ./mcp-arc.db
 
 masking:
   enabled: true
@@ -29,6 +29,20 @@ masking:
     - name: sensitive_fields
       fields: [password, passwd, pwd, secret, token, apiKey, api_key, cvv, card_cvv]
       mask_char: "****"
+
+# 可选：LLM 辅助脱敏（第二遍补漏）。静态规则先跑，模型只负责抓漏网之鱼。
+# 失败 / 超时一律 fail-open：不影响 tool 调用，退回静态脱敏结果。
+llm:
+  enabled: false
+  # OpenAI 兼容的 chat completions 地址；不以 /chat/completions 结尾时会自动补上
+  endpoint: ""            # 例：https://api.openai.com/v1 或 https://dashscope.aliyuncs.com/compatible-mode/v1
+  api_key: ""             # 建议用环境变量 MCP_ARC_LLM_API_KEY，别写进配置文件
+  model: "gpt-4o-mini"
+  timeout_ms: 3000        # 单次 tool 调用愿意为模型等的最长时间
+  max_bytes: 8192         # 超过这个体积的参数跳过 LLM
+  cache_ttl_seconds: 300  # 相同入参的结果缓存时长
+  cache_entries: 512
+  apply_to_result: false  # 是否也对上游返回做 LLM 补漏（默认只对请求参数）
 
 rate_limit:
   enabled: true    # 按 client_id 限流（令牌桶 QPS + 日配额）

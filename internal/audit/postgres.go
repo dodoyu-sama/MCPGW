@@ -8,6 +8,9 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// compile-time check: both backends satisfy the full Store contract.
+var _ Store = (*PostgresStore)(nil)
+
 // PostgresStore persists audit records in PostgreSQL. It implements the same
 // Store interface as the SQLite backend.
 type PostgresStore struct {
@@ -45,6 +48,20 @@ func (s *PostgresStore) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_calls_client ON calls(client_id);
 	CREATE INDEX IF NOT EXISTS idx_calls_tool   ON calls(tool_name);
 	CREATE INDEX IF NOT EXISTS idx_calls_time   ON calls(timestamp);`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS mask_rules (
+		id          BIGSERIAL PRIMARY KEY,
+		name        TEXT    NOT NULL,
+		patterns    TEXT,
+		fields      TEXT,
+		mask_char   TEXT,
+		enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+		source      TEXT    NOT NULL DEFAULT 'ui',
+		created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+		updated_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_mask_rules_name ON mask_rules(name);`); err != nil {
 		return err
 	}
 	for _, ddl := range []string{
@@ -168,4 +185,54 @@ func (s *PostgresStore) Stats(opts StatsOpts) (*Stats, error) {
 
 func (s *PostgresStore) Close() error {
 	return s.db.Close()
+}
+
+// --- masking rules ---------------------------------------------------------
+
+func (s *PostgresStore) ListRules() ([]MaskRule, error) {
+	rows, err := s.db.Query(`SELECT ` + ruleColumns + ` FROM mask_rules ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return scanRules(rows)
+}
+
+func (s *PostgresStore) GetRule(id int64) (*MaskRule, error) {
+	rows, err := s.db.Query(`SELECT `+ruleColumns+` FROM mask_rules WHERE id = $1`, id)
+	if err != nil {
+		return nil, err
+	}
+	rules, err := scanRules(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(rules) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &rules[0], nil
+}
+
+func (s *PostgresStore) CreateRule(r *MaskRule) error {
+	if r.Source == "" {
+		r.Source = "ui"
+	}
+	return s.db.QueryRow(
+		`INSERT INTO mask_rules (name, patterns, fields, mask_char, enabled, source)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		r.Name, encodeStrings(r.Patterns), encodeStrings(r.Fields), r.MaskChar, r.Enabled, r.Source,
+	).Scan(&r.ID)
+}
+
+func (s *PostgresStore) UpdateRule(r *MaskRule) error {
+	_, err := s.db.Exec(
+		`UPDATE mask_rules SET name = $1, patterns = $2, fields = $3, mask_char = $4, enabled = $5, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $6`,
+		r.Name, encodeStrings(r.Patterns), encodeStrings(r.Fields), r.MaskChar, r.Enabled, r.ID,
+	)
+	return err
+}
+
+func (s *PostgresStore) DeleteRule(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM mask_rules WHERE id = $1`, id)
+	return err
 }

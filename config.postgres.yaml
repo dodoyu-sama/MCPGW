@@ -5,8 +5,8 @@ server:
 audit:
   enabled: true
   driver: postgres
-  dsn: "postgres://mcpgw:mcpgw@localhost:5432/mcpgw?sslmode=disable"
-  # 建库示例：createdb mcpgw  或让 MCPGW 在 migrate() 里自动建表
+  dsn: "postgres://mcp_arc:mcp_arc@localhost:5432/mcp_arc?sslmode=disable"
+  # 建库示例：createdb mcp_arc  或让 MCP Arc 在 migrate() 里自动建表
 
 masking:
   enabled: true

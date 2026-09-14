@@ -12,12 +12,12 @@ COPY go.mod ./
 RUN go mod download
 COPY . .
 COPY --from=web /web/dist ./web/dist
-RUN CGO_ENABLED=1 go build -o /out/mcpgw ./cmd/mcpgw
+RUN CGO_ENABLED=1 go build -o /out/mcp-arc ./cmd/mcp-arc
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build /out/mcpgw /usr/local/bin/mcpgw
-COPY config.docker.yaml /etc/mcpgw/config.docker.yaml
-COPY config.docker-postgres.yaml /etc/mcpgw/config.docker-postgres.yaml
+COPY --from=build /out/mcp-arc /usr/local/bin/mcp-arc
+COPY config.docker.yaml /etc/mcp-arc/config.docker.yaml
+COPY config.docker-postgres.yaml /etc/mcp-arc/config.docker-postgres.yaml
 EXPOSE 8080
-ENTRYPOINT ["mcpgw", "--config", "/etc/mcpgw/config.docker.yaml"]
+ENTRYPOINT ["mcp-arc", "--config", "/etc/mcp-arc/config.docker.yaml"]

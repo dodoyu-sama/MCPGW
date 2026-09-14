@@ -1,4 +1,4 @@
-// A more realistic MCP stdio server (no SDK) to exercise MCPGW end-to-end.
+// A more realistic MCP stdio server (no SDK) to exercise MCP Arc end-to-end.
 // It exposes tools that take PII / secrets so we can verify masking + audit.
 const readline = require('readline')
 

@@ -1,5 +1,16 @@
 <template>
   <div>
+    <div style="margin-bottom: 12px; display: flex; gap: 8px; align-items: center">
+      <el-button size="small" :loading="exporting" @click="doExport('json')">
+        Export JSON
+      </el-button>
+      <el-button size="small" :loading="exporting" @click="doExport('csv')">
+        Export CSV
+      </el-button>
+      <el-checkbox v-model="includeRaw" label="include raw (unmasked)" />
+      <el-button size="small" @click="reload">Refresh</el-button>
+    </div>
+
     <el-table :data="rows" height="600" style="width: 100%">
       <el-table-column prop="id" label="ID" width="80" />
       <el-table-column prop="client_id" label="Client" width="120" />
@@ -32,13 +43,43 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { fetchLogs, fetchReplay, type CallRecord } from '../api'
+import { ElMessage } from 'element-plus'
+import {
+  downloadBlob,
+  exportCalls,
+  fetchLogs,
+  fetchReplay,
+  type CallRecord,
+} from '../api'
 
 const rows = ref<CallRecord[]>([])
 const dialogVisible = ref(false)
 const replayText = ref('')
 const busy = ref<number | null>(null)
+const exporting = ref(false)
+const includeRaw = ref(false)
 const preview = (s: string) => (s && s.length > 48 ? s.slice(0, 48) + '…' : s || '')
+
+const EXPORT_LIMIT = 1000
+
+async function reload() {
+  rows.value = await fetchLogs({ limit: 200 })
+}
+
+async function doExport(format: 'json' | 'csv') {
+  exporting.value = true
+  try {
+    const params: Record<string, any> = { limit: EXPORT_LIMIT }
+    if (includeRaw.value) params.raw = 1
+    const blob = await exportCalls(format, params)
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+    downloadBlob(blob, `mcp-arc-calls-${stamp}.${format}`)
+  } catch (e: any) {
+    ElMessage.error(String(e?.response?.data?.error || e))
+  } finally {
+    exporting.value = false
+  }
+}
 
 async function replay(row: CallRecord) {
   busy.value = row.id
@@ -53,7 +94,5 @@ async function replay(row: CallRecord) {
   }
 }
 
-onMounted(async () => {
-  rows.value = await fetchLogs({ limit: 200 })
-})
+onMounted(reload)
 </script>

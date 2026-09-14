@@ -2,7 +2,7 @@ package transport
 
 import "context"
 
-// ClientTransporter is how MCPGW communicates with an MCP client.
+// ClientTransporter is how MCP Arc communicates with an MCP client.
 // Run reads messages from the client and invokes onMessage for each JSON-RPC
 // payload, together with a `respond` function that writes a message back to
 // that specific client (used for synthetic errors and for routing responses).
@@ -14,7 +14,7 @@ type ClientTransporter interface {
 	Close() error
 }
 
-// UpstreamTransporter is how MCPGW communicates with the upstream MCP server.
+// UpstreamTransporter is how MCP Arc communicates with the upstream MCP server.
 type UpstreamTransporter interface {
 	Run(ctx context.Context, onMessage func(raw []byte)) error
 	Write(raw []byte) error

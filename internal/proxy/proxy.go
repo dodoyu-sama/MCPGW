@@ -17,12 +17,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dodoyu-sama/mcpgw/internal/admin"
-	"github.com/dodoyu-sama/mcpgw/internal/audit"
-	"github.com/dodoyu-sama/mcpgw/internal/config"
-	"github.com/dodoyu-sama/mcpgw/internal/mask"
-	"github.com/dodoyu-sama/mcpgw/internal/ratelimit"
-	"github.com/dodoyu-sama/mcpgw/internal/transport"
+	"github.com/dodoyu-sama/mcp-arc/internal/admin"
+	"github.com/dodoyu-sama/mcp-arc/internal/audit"
+	"github.com/dodoyu-sama/mcp-arc/internal/config"
+	"github.com/dodoyu-sama/mcp-arc/internal/mask"
+	"github.com/dodoyu-sama/mcp-arc/internal/ratelimit"
+	"github.com/dodoyu-sama/mcp-arc/internal/transport"
 )
 
 type Options struct {
@@ -31,11 +31,12 @@ type Options struct {
 }
 
 type Proxy struct {
-	opts       Options
-	auditStore audit.Store
-	masker     *mask.Masker
-	limiter    *ratelimit.TokenBucketManager
-	clientID   string
+	opts        Options
+	auditStore  audit.Store // also holds the masking rules table
+	auditWrites bool        // audit.enabled: whether call records are persisted
+	masker      *mask.Masker
+	limiter     *ratelimit.TokenBucketManager
+	clientID    string
 
 	upstreamWriter  func([]byte) error
 	clientBroadcast func([]byte) error
@@ -47,26 +48,35 @@ type Proxy struct {
 
 func New(opts Options) *Proxy {
 	p := &Proxy{
-		opts:     opts,
-		clientID: opts.Config.Server.ClientID,
-		pending:  make(map[string]*pendingCall),
+		opts:        opts,
+		clientID:    opts.Config.Server.ClientID,
+		auditWrites: opts.Config.Audit.Enabled,
+		pending:     make(map[string]*pendingCall),
 	}
 
-	if opts.Config.Audit.Enabled {
+	// One store backs both call records and masking rules, so the console can
+	// edit rules without a second connection (or a second SQLite file lock).
+	if opts.Config.Audit.Enabled || opts.Config.Masking.Enabled {
 		store, err := audit.NewStore(opts.Config.Audit.Driver, opts.Config.Audit.DSN)
 		if err != nil {
-			log.Printf("warn: audit store init failed: %v", err)
+			log.Printf("warn: store init failed: %v", err)
 		} else {
 			p.auditStore = store
 		}
 	}
 
 	if opts.Config.Masking.Enabled {
-		m, err := mask.New(opts.Config.Masking.Rules)
+		m, err := mask.New(nil)
 		if err != nil {
 			log.Printf("warn: masker init failed: %v", err)
 		} else {
 			p.masker = m
+			p.seedConfigRules()
+			if err := p.reloadRules(); err != nil {
+				log.Printf("warn: rule load failed, using config rules: %v", err)
+				_ = m.Update(specsFromConfig(opts.Config.Masking.Rules))
+			}
+			p.initDetector(m)
 		}
 	}
 
@@ -109,7 +119,7 @@ func (p *Proxy) Run() error {
 	switch p.opts.Config.Transport.Client {
 	case "sse":
 		client = transport.NewSSEServer(p.opts.Config.Transport.Listen)
-		log.Printf("mcpgw: SSE client transport listening on %s", p.opts.Config.Transport.Listen)
+		log.Printf("mcp-arc: SSE client transport listening on %s", p.opts.Config.Transport.Listen)
 	default: // stdio
 		client = transport.StdioClient{}
 	}
@@ -125,9 +135,9 @@ func (p *Proxy) Run() error {
 		}
 	}
 
-	if p.opts.Config.Admin.Enabled && p.auditStore != nil {
+	if p.opts.Config.Admin.Enabled {
 		go func() {
-			srv := admin.New(p.auditStore, p.opts.Config.Admin.Token, p)
+			srv := admin.New(p.auditStore, p.opts.Config.Admin.Token, p, p)
 			if e := srv.Start(p.opts.Config.Admin.Port); e != nil {
 				log.Printf("warn: admin server stopped: %v", e)
 			}
@@ -159,9 +169,13 @@ func (p *Proxy) Run() error {
 		}
 	}()
 
-	log.Printf("mcpgw: running (client=%s, upstream=%s)", p.opts.Config.Transport.Client, p.opts.Config.Transport.Upstream)
+	log.Printf("mcp-arc: running (client=%s, upstream=%s)", p.opts.Config.Transport.Client, p.opts.Config.Transport.Upstream)
+	// Reap requests the upstream never answered, so a dead or hung upstream
+	// cannot grow p.pending without bound.
+	go p.sweepPending(ctx)
+
 	err = <-errCh
-	log.Printf("mcpgw: shutting down (%v)", err)
+	log.Printf("mcp-arc: shutting down (%v)", err)
 	cancel()
 	_ = upstream.Close()
 	_ = client.Close()
@@ -190,15 +204,19 @@ func (p *Proxy) Replay(ctx context.Context, toolName string, rawParams []byte) (
 	if p.upstreamWriter == nil {
 		return nil, errors.New("replay unavailable: upstream transport not connected")
 	}
-	var args map[string]interface{}
-	if err := json.Unmarshal(rawParams, &args); err != nil || args == nil {
+	// Numbers stay in their literal form so a replayed call carries byte-identical
+	// arguments to the original (see decodeJSONObject).
+	args, err := decodeJSONObject(rawParams)
+	if err != nil || args == nil {
 		args = map[string]interface{}{}
 	}
 	upID := fmt.Sprintf("gw-%d", atomic.AddInt64(&p.seq, 1))
 	ch := make(chan []byte, 1)
+	now := time.Now()
 	pc := &pendingCall{
 		toolName: toolName,
-		start:    time.Now(),
+		start:    now,
+		deadline: now.Add(pendingTTL),
 		respond:  func(b []byte) error { ch <- b; return nil },
 		origID:   upID,
 	}
@@ -213,14 +231,11 @@ func (p *Proxy) Replay(ctx context.Context, toolName string, rawParams []byte) (
 	p.mu.Lock()
 	p.pending[upID] = pc
 	p.mu.Unlock()
+	// Replay is synchronous: once it returns, nobody is left reading ch, so the
+	// entry is dead weight until the sweeper would find it.
+	defer p.dropPending(upID)
 
-	req := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      upID,
-		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": toolName, "arguments": args},
-	}
-	b, err := json.Marshal(req)
+	b, err := newToolCallRequest(upID, toolName, args)
 	if err != nil {
 		return nil, err
 	}

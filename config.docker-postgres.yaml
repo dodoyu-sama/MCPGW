@@ -5,7 +5,7 @@ audit:
   enabled: true
   driver: postgres
   # In docker compose the postgres service is reachable as host "postgres".
-  dsn: "postgres://mcpgw:mcpgw@postgres:5432/mcpgw?sslmode=disable"
+  dsn: "postgres://mcp_arc:mcp_arc@postgres:5432/mcp_arc?sslmode=disable"
 
 masking:
   enabled: true

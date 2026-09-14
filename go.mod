@@ -1,4 +1,4 @@
-module github.com/dodoyu-sama/mcpgw
+module github.com/dodoyu-sama/mcp-arc
 
 go 1.22
 

@@ -13,7 +13,7 @@ import (
 )
 
 // SSEServer is an MCP client transporter: it exposes the MCP SSE transport so
-// that MCP clients can connect to MCPGW over HTTP. Clients open GET /sse to
+// that MCP clients can connect to MCP Arc over HTTP. Clients open GET /sse to
 // receive messages, and POST JSON-RPC to /messages?sessionId=... to send them.
 type SSEServer struct {
 	listen   string

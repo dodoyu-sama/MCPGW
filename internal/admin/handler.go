@@ -5,10 +5,14 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/dodoyu-sama/mcpgw/internal/audit"
+	"github.com/dodoyu-sama/mcp-arc/internal/audit"
 )
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "audit store not available"})
+		return
+	}
 	q := r.URL.Query()
 	opts := audit.QueryOpts{
 		ClientID: q.Get("client_id"),
@@ -28,6 +32,10 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "audit store not available"})
+		return
+	}
 	stats, err := s.store.Stats(audit.StatsOpts{})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -42,6 +50,10 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "use POST"})
+		return
+	}
+	if s.store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "audit store not available"})
 		return
 	}
 	var body struct {

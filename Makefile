@@ -1,4 +1,4 @@
-BINARY := mcpgw
+BINARY := mcp-arc
 
 .PHONY: build web build-go run dev clean test
 
@@ -9,7 +9,7 @@ web:
 	cd web && npm install && npm run build
 
 build-go:
-	go build -o $(BINARY) ./cmd/mcpgw
+	go build -o $(BINARY) ./cmd/mcp-arc
 
 ## Build + run the dev gateway (sqlite, SSE client on :8081, console on :8080).
 run: build

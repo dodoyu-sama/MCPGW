@@ -1,5 +1,5 @@
 // Minimal MCP server speaking the SSE transport, for end-to-end testing of
-// MCPGW's `upstream: sse` mode. No external dependencies.
+// MCP Arc's `upstream: sse` mode. No external dependencies.
 //
 //   node examples/mcp-server-sse/server.js
 //

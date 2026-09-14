@@ -1,7 +1,7 @@
 <template>
   <el-container style="height: 100vh">
     <el-header style="display: flex; align-items: center">
-      <h2 style="margin: 0">MCPGW Console</h2>
+      <h2 style="margin: 0">MCP Arc Console</h2>
     </el-header>
     <el-container>
       <el-aside width="200px" style="border-right: 1px solid #eee">

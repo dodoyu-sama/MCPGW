@@ -4,7 +4,7 @@ server:
 audit:
   enabled: true
   driver: sqlite
-  dsn: /data/mcpgw.db        # persisted via the compose volume mount ./data:/data
+  dsn: /data/mcp-arc.db        # persisted via the compose volume mount ./data:/data
 
 masking:
   enabled: true

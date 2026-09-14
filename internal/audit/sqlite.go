@@ -7,6 +7,9 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// compile-time check: both backends satisfy the full Store contract.
+var _ Store = (*SQLiteStore)(nil)
+
 type SQLiteStore struct {
 	db *sql.DB
 }
@@ -42,6 +45,20 @@ func (s *SQLiteStore) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_calls_client ON calls(client_id);
 	CREATE INDEX IF NOT EXISTS idx_calls_tool   ON calls(tool_name);
 	CREATE INDEX IF NOT EXISTS idx_calls_time   ON calls(timestamp);`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS mask_rules (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		name        TEXT    NOT NULL,
+		patterns    TEXT,
+		fields      TEXT,
+		mask_char   TEXT,
+		enabled     INTEGER NOT NULL DEFAULT 1,
+		source      TEXT    NOT NULL DEFAULT 'ui',
+		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_mask_rules_name ON mask_rules(name);`); err != nil {
 		return err
 	}
 	// Best-effort schema evolution for existing databases (column may already exist).
@@ -158,4 +175,66 @@ func (s *SQLiteStore) Stats(opts StatsOpts) (*Stats, error) {
 
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()
+}
+
+// --- masking rules ---------------------------------------------------------
+
+func (s *SQLiteStore) ListRules() ([]MaskRule, error) {
+	rows, err := s.db.Query(`SELECT ` + ruleColumns + ` FROM mask_rules ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return scanRules(rows)
+}
+
+func (s *SQLiteStore) GetRule(id int64) (*MaskRule, error) {
+	rows, err := s.db.Query(`SELECT `+ruleColumns+` FROM mask_rules WHERE id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	rules, err := scanRules(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(rules) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &rules[0], nil
+}
+
+func (s *SQLiteStore) CreateRule(r *MaskRule) error {
+	if r.Source == "" {
+		r.Source = "ui"
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO mask_rules (name, patterns, fields, mask_char, enabled, source)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		r.Name, encodeStrings(r.Patterns), encodeStrings(r.Fields), r.MaskChar, boolToInt(r.Enabled), r.Source,
+	)
+	if err != nil {
+		return err
+	}
+	r.ID, _ = res.LastInsertId()
+	return nil
+}
+
+func (s *SQLiteStore) UpdateRule(r *MaskRule) error {
+	_, err := s.db.Exec(
+		`UPDATE mask_rules SET name = ?, patterns = ?, fields = ?, mask_char = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`,
+		r.Name, encodeStrings(r.Patterns), encodeStrings(r.Fields), r.MaskChar, boolToInt(r.Enabled), r.ID,
+	)
+	return err
+}
+
+func (s *SQLiteStore) DeleteRule(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM mask_rules WHERE id = ?`, id)
+	return err
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

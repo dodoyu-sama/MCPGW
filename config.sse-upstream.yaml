@@ -2,15 +2,15 @@ server:
   client_id: "default"
 
 transport:
-  client: stdio        # MCPGW talks to the MCP client over stdio
-  upstream: sse        # MCPGW reaches the remote server over HTTP/SSE
+  client: stdio        # MCP Arc talks to the MCP client over stdio
+  upstream: sse        # MCP Arc reaches the remote server over HTTP/SSE
   upstream_url: "http://localhost:18080/sse"
   listen: ""
 
 audit:
   enabled: true
   driver: sqlite
-  dsn: ./mcpgw-sse-up.db
+  dsn: ./mcp-arc-sse-up.db
 
 masking:
   enabled: true

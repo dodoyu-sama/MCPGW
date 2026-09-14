@@ -1,101 +1,80 @@
 [English](./README.md) · [中文](./README.zh-CN.md)
 
-# MCPGW
+# MCP Arc
 
-A transparent proxy / sidecar for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io).
-It sits between any MCP client (Claude Desktop, Cursor, …) and any MCP server, and adds:
-
-- **Transparent proxy** — stdio→stdio passthrough; the client is none the wiser.
-- **Audit logging** — who / when / which tool / what params / what result, stored in SQLite (default) or PostgreSQL.
-- **Parameter masking** — regex + field-name rules blank out PII / secrets before they hit the log.
-- **Rate limiting** — per `client_id` token bucket (QPS) + daily quota.
-- **Admin REST API** — query logs & stats for the Vue3 dashboard.
-
-> Neutral, cross-client, single-binary. Cloud vendors optimize for their own
-> ecosystem; MCPGW is the independent middle layer.
-
-**Source:** https://github.com/dodoyu-sama/MCPGW
-
-## Why MCPGW
-
-A large, all-in-one MCP gateway is a fight you can't win against cloud vendors —
-they optimize for their own ecosystems. The real gap is what they won't do finely:
-**neutral governance of tool calls** that works across every MCP client.
-
-MCPGW is a lightweight sidecar/proxy that sits between any MCP client (Claude
-Desktop, Cursor, or domestic clients) and any MCP server, adding three things cloud
-vendors leave to others:
-
-- **Parameter masking** — auto-detect and redact PII / secrets in tool arguments.
-- **Call audit** — who / when / which tool / what params / what result.
-- **Replay** — re-issue a recorded `tools/call` to the upstream, for debugging and compliance.
-
-It stays deliberately **decoupled from MCP protocol internals**: it lives at the
-transport layer (stdio / SSE) and only knows the `tools/call` method name and its
-params shape. As the MCP spec evolves, the governance layer keeps working without
-rewrites.
-
-## Architecture
+A **lightweight MCP proxy** that sits between an MCP client and an MCP server.
+One command adds audit logging, parameter masking and call replay to any MCP
+call — without touching the protocol, and without locking you to a vendor.
 
 ```
-MCP client  ──stdio──▶  mcpgw  ──stdio──▶  MCP server
- (Claude/Cursor)      │  intercept        (node/python/…)
-                      │   ├─ rate limit
-                      │   ├─ mask params
-                      │   └─ audit ─▶ SQLite / PostgreSQL
-                      └─ admin REST API :8080 ─▶ Vue3 dashboard
+MCP client  ──────▶  MCP Arc  ──────▶  MCP server
+(Claude / Cursor /    │  governance      (node / python / …)
+ 国产客户端 …)        │
+                      └─ audit ─▶ SQLite / PostgreSQL
 ```
 
-## Quick start (30s)
+**Source:** https://github.com/dodoyu-sama/MCP-Arc
 
-Requires **Go 1.22+** and a C compiler (CGO) for the SQLite driver:
+## What it does
+
+| | |
+|---|---|
+| **Parameter masking** | Redacts PII / secrets in `tools/call` arguments (and results) before anything is persisted. Regex patterns + sensitive field names, configured in YAML or edited at runtime. |
+| **Call audit** | Who (`client_id`), when, which tool, what params, what result, how long, success or error — persisted to SQLite (default) or PostgreSQL. |
+| **Replay** | Re-issue a recorded `tools/call` to the upstream verbatim, for debugging flaky tools and for compliance re-execution. |
+
+Plus the small stuff that makes it usable: per-`client_id` rate limiting (token
+bucket QPS + daily quota), runtime-editable masking rules (no restart), JSON /
+CSV export, and an embedded Vue3 console served by one binary.
+
+## Design
+
+- It works at the **transport layer** (stdio / SSE), not inside the protocol.
+- The only MCP knowledge it relies on is the `tools/call` method name and the
+  `params.{name,arguments}` shape.
+- Requests are correlated by rewriting the JSON-RPC `id` and restoring it on the
+  way back; responses are **matched**, not parsed. Everything else is
+  protocol-agnostic plumbing, so spec changes don't force a rewrite.
+- Messages it does not need to touch are forwarded byte-for-byte.
+
+## Quick start
+
+Requires **Go 1.22+** and a C compiler (CGO) for the SQLite driver.
 
 ```bash
-brew install go            # macOS
-xcode-select --install     # provides clang for CGO (macOS)
+make build     # builds the web console (web/dist), then ./mcp-arc
+make test
 ```
 
-Build and run against the bundled demo server:
+Pipe a couple of JSON-RPC messages through the proxy:
 
 ```bash
-make build          # builds the web console (web/dist) then compiles the binary
-make test           # run the Go test suite
-# or, manually:
-#   cd web && npm install && npm run build && cd ..
-#   go build -o mcpgw ./cmd/mcpgw
-
-# pipe a couple of JSON-RPC messages through the proxy
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"message":"my email is a@b.com and pwd secret123"}}}' \
-  | ./mcpgw --upstream "node examples/echo-server/server.js"
+  | ./mcp-arc --upstream "node examples/echo-server/server.js"
 ```
 
-You should see the upstream responses printed, and a `mcpgw.db` SQLite file created.
-Inspect the audit log via the admin API:
+The upstream responses are printed and `mcp-arc.db` is created. In the audit log,
+the email and the `pwd` field above are stored **masked**, while the real request
+still reached the upstream untouched:
 
 ```bash
 curl -H "Authorization: Bearer change-me" localhost:8080/api/logs
 curl -H "Authorization: Bearer change-me" localhost:8080/api/stats
 ```
 
-The `tools/call` above contains an email and a `pwd` field — both are stored
-**masked** in the audit log, while the real request still reached the upstream.
-
 ## Transports
 
-MCPGW decouples how **clients** connect from how it reaches the **upstream**
-server. Both sides support `stdio` and `sse` (HTTP Server-Sent Events, the MCP
-remote transport).
+Client side and upstream side are configured independently; both support `stdio`
+and `sse`.
 
-| `transport.client` | `transport.upstream` | 场景 |
+| `transport.client` | `transport.upstream` | scenario |
 |---|---|---|
-| `stdio` (默认) | `stdio` (默认) | 本地透明代理，client 直接 spawn MCPGW |
-| `sse` | `stdio` | **网关模式**：远端/多客户端经 HTTP 连 MCPGW，MCPGW 前端一个本地 stdio server |
-| `sse` | `sse` | 完全远程：MCPGW 在中间做审计/脱敏，两侧都是 HTTP |
-| `stdio` | `sse` | 把本地 client 的调用转发到远程 SSE server |
-
-SSE 网关配置示例：
+| `stdio` (default) | `stdio` (default) | local transparent proxy — the client spawns MCP Arc directly |
+| `sse` | `stdio` | **gateway mode** — remote / multiple clients over HTTP, Arc fronts a local stdio server |
+| `sse` | `sse` | fully remote — Arc governs in the middle, HTTP on both sides |
+| `stdio` | `sse` | forward a local client's calls to a remote SSE server |
 
 ```yaml
 server:
@@ -106,44 +85,36 @@ transport:
   upstream: stdio
 ```
 
-运行后 MCP 客户端连 `http://host:8081/sse`（GET 建立事件流，POST
-`/messages?sessionId=...` 发送请求）。多客户端并发时，MCPGW 用网关内部 id
-改写做会话路由，再把上游响应的 `id` 还原给原客户端，因此审计与响应都不会串号。
+Clients then connect to `http://host:8081/sse` (GET for the event stream, POST
+`/messages?sessionId=...` to send).
 
-CLI 也可覆盖：`--client-transport sse --listen :8081 --upstream-transport sse --upstream-url https://host/mcp/sse`。
+### CLI flags
 
-### 端到端测试 `upstream: sse`
-
-`examples/mcp-server-sse/server.js` 是一个零依赖的最小 SSE MCP server（监听
-`:18080`），可用于验证 `upstream: sse`：
+`--config`, `--upstream`, `--client-transport` (`stdio`|`sse`), `--listen`,
+`--upstream-transport` (`stdio`|`sse`), `--upstream-url`.
 
 ```bash
-# 终端 1：启动上游 SSE server
-node examples/mcp-server-sse/server.js
-
-# 终端 2：MCPGW 以 stdio 对接 client、sse 对接上游
-go build -o mcpgw ./cmd/mcpgw
-printf '%s\n' \
-  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"lookup_customer","arguments":{"email":"alice@example.com","national_id":"11010519491231002X"}}}' \
-  | ./mcpgw --config config.sse-upstream.yaml
+./mcp-arc --client-transport sse --listen :8081 \
+          --upstream-transport sse --upstream-url https://host/mcp/sse
 ```
 
 ## Wiring into a real client
 
-Point your MCP client at `mcpgw` instead of the real server. For Claude Desktop
-(`claude_desktop_config.json`):
+Point your MCP client at `mcp-arc` instead of the real server:
 
 ```json
 {
   "mcpServers": {
-    "my-server-via-mcpgw": {
-      "command": "/path/to/mcpgw",
+    "my-server-via-mcp-arc": {
+      "command": "/path/to/mcp-arc",
       "args": ["--upstream", "node", "/path/to/your-server.js"]
     }
   }
 }
 ```
+
+If the client supports remote MCP over SSE, run Arc in gateway mode
+(`transport.client: sse`) and give it `http://host:8081/sse`.
 
 ## Configuration
 
@@ -151,41 +122,81 @@ See `config.yaml`. Key sections:
 
 | key | meaning |
 |---|---|
-| `server.client_id` | label stored on every audit record (or `MCPGW_CLIENT_ID`) |
-| `server.upstream` | optional command+args written in config instead of `--upstream` |
-| `audit` | `enabled`, `driver: sqlite` (default) or `postgres`, `dsn` (SQLite path or Postgres URL) |
-| `transport` | `client` (`stdio`/`sse`), `upstream` (`stdio`/`sse`), `listen` (SSE bind addr) |
+| `server.client_id` | label stored on every audit record (or `MCP_ARC_CLIENT_ID`) |
+| `server.upstream` | upstream command + args written in config, instead of `--upstream` |
+| `transport` | `client` / `upstream` (`stdio`\|`sse`), `listen` (SSE bind addr), `upstream_url` |
+| `audit` | `enabled`, `driver: sqlite` (default) or `postgres`, `dsn` |
 | `masking` | `enabled` + `rules` (regex `patterns` and/or `fields`) |
-| `rate_limit` | `enabled`, `qps`, `daily_quota` (per client_id) |
-| `admin` | `enabled`, `port`, `token` (Bearer token for the dashboard) |
+| `llm` | optional LLM-assisted masking: `enabled`, `endpoint`, `api_key`, `model`, `timeout_ms`, `max_bytes`, `cache_ttl_seconds`, `apply_to_result` |
+| `rate_limit` | `enabled`, `qps`, `daily_quota` (per `client_id`) |
+| `admin` | `enabled`, `port`, `token` (Bearer token for the console) |
 
-Masking rules ship in `config.yaml` — email, credit card, API key, CN ID, and
-sensitive-field presets are included as examples and can be extended there.
+## Masking rules
 
-## Web dashboard
+Rules live in the database (`mask_rules` table), not just in YAML: on first run
+the rules from `config.yaml` are **seeded** in (`source: config`), and from then
+on the console owns them — create, edit, enable/disable and delete at runtime.
+Every write **hot-reloads** the masker, so the next tool call uses the new rules
+without a restart.
 
-The Vue3 console is **compiled into the binary** (`web/embed.go` → `//go:embed
-all:dist`) and served by the admin HTTP server. After `make build`, just open
-`http://localhost:8080` — no separate frontend process needed.
+A rule needs a `name` plus at least one `pattern` or `field`; regexes are
+compile-checked on save, so a bad pattern is rejected instead of silently
+disabling masking.
 
 ```bash
-make build
-./mcpgw --config config.dev.yaml
-# open http://localhost:8080  → Dashboard / Call Logs / Rules
+curl -H "Authorization: Bearer change-me" localhost:8080/api/rules
+
+curl -X POST -H "Authorization: Bearer change-me" -H "Content-Type: application/json" \
+  -d '{"name":"phone_cn","patterns":["\\b1[3-9]\\d{9}\\b"],"mask_char":"[PHONE]"}' \
+  localhost:8080/api/rules
 ```
 
-For live frontend development (HMR) without rebuilding the binary:
+## LLM-assisted masking
+
+An optional second pass for free-text PII that static rules miss. The model only
+sees the **already-masked** payload and returns the paths still worth redacting;
+values already redacted never leave the process, and hallucinated paths are
+ignored. It **fails open**: on error, timeout, or a payload over `max_bytes`, the
+static result stands and the call proceeds.
+
+```yaml
+llm:
+  enabled: true
+  endpoint: "https://api.openai.com/v1"   # any OpenAI-compatible endpoint
+  # api_key: prefer MCP_ARC_LLM_API_KEY
+  model: "gpt-4o-mini"
+  timeout_ms: 3000
+  max_bytes: 8192
+  apply_to_result: false                  # also scan upstream results?
+```
+
+## Export
 
 ```bash
-./mcpgw --config config.dev.yaml &   # gateway + admin API on :8080
-cd web && npm run dev                 # http://localhost:5173 (proxies /api -> :8080)
+curl -H "Authorization: Bearer change-me" "localhost:8080/api/export?format=csv"
+curl -H "Authorization: Bearer change-me" "localhost:8080/api/export?format=json&limit=5000"
+curl -H "Authorization: Bearer change-me" "localhost:8080/api/export?format=json&raw=1"  # includes unmasked values
+```
+
+Filterable by `client_id` / `tool` / `limit` (max 10000). Exports contain the
+**masked** params and results; unmasked `raw_params` / `raw_result` are only
+included with an explicit `raw=1`. The console's Call Logs page wires Export
+JSON / CSV to the same endpoint.
+
+## Web console
+
+The Vue3 console is compiled into the binary (`//go:embed`) and served by the
+admin HTTP server — no separate frontend process.
+
+```bash
+./mcp-arc --config config.dev.yaml
+# open http://localhost:8080  →  Dashboard / Call Logs / Rules
 ```
 
 ## Replay
 
-Every `tools/call` is recorded with its original (unmasked) request params and the
-raw upstream response. Replay re-issues a recorded call to the upstream — useful for
-debugging flaky tools and for compliance re-execution.
+Every `tools/call` is recorded with its original (unmasked) request params and
+the raw upstream response:
 
 ```bash
 # 1) find a call id
@@ -196,28 +207,24 @@ curl -X POST -H "Authorization: Bearer change-me" -H "Content-Type: application/
      -d '{"call_id": 1}' localhost:8080/api/replay
 ```
 
-Replay is transport-agnostic: it rides the same id-rewrite / response-correlation
-machinery as a live call, so it works for stdio and SSE upstreams alike.
+Replay rides the same id-rewrite / response-correlation machinery as a live
+call, so it works for stdio and SSE upstreams alike.
 
 ## Docker
 
 ```bash
-# SQLite audit backend (default) on :8080
-docker compose up --build
-
-# PostgreSQL audit backend — starts a postgres service + gateway on :8081
-docker compose --profile postgres up --build
-
-# point MCPGW at your own upstream — edit the command in docker-compose.yml
+docker compose up --build                     # SQLite backend, console on :8080
+docker compose --profile postgres up --build  # PostgreSQL backend
 ```
-
-The `postgres` profile provisions a `postgres:16-alpine` container (data persisted
-in the `pgdata` volume) plus a `mcpgw-postgres` gateway that loads
-`config.docker-postgres.yaml`. For a standalone Postgres setup, copy
-`config.postgres.yaml` and set `audit.driver: postgres` with your DSN.
 
 ## Roadmap
 
-- v0.1 (this repo): stdio↔stdio / SSE transports, audit (SQLite + PostgreSQL), masking, rate limit, dashboard, replay.
-- v0.2: LLM-assisted masking, rule CRUD in UI, export.
-- v1.0: multi-tenancy, policy engine.
+- **v0.1** ✅ stdio / SSE transports, audit (SQLite + PostgreSQL), masking, rate limit, console, replay.
+- **v0.2** ✅ LLM-assisted masking, rule CRUD in the console, JSON / CSV export.
+- **v0.3** (in progress) — stability and production readiness: config hot reload, graceful upstream exit, audit write degradation, alert webhooks, richer stats, more PII presets, 7×24 soak test.
+- **v1.0** — production ready: complete docs, one-command install (script / brew / `go install` / Docker), TLS for SSE.
+- **v2.0+** — multi-tenancy, policy engine, clustered deployment. No timeline.
+
+## License
+
+MIT — see [LICENSE](./LICENSE).

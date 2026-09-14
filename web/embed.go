@@ -1,5 +1,5 @@
 // Package web embeds the compiled frontend (web/dist) into the Go binary so the
-// admin console is served directly by MCPGW — no separate static file server or
+// admin console is served directly by MCP Arc — no separate static file server or
 // dev proxy needed for end users.
 package web
 

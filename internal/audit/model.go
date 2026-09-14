@@ -35,11 +35,45 @@ type Stats struct {
 	ToolCounts   map[string]int64 `json:"tool_counts"`
 }
 
-// Store is the persistence interface for audit records.
-type Store interface {
+// MaskRule is a masking rule as persisted in the `mask_rules` table.
+//
+// Rules are no longer config-only: the console can create, edit, enable/disable
+// and delete them at runtime, and the masker hot-reloads. Rules seeded from
+// config.yaml are marked Source="config" so operators can tell them apart from
+// rules created in the UI (Source="ui") or suggested by the LLM pass.
+type MaskRule struct {
+	ID        int64     `db:"id" json:"id"`
+	Name      string    `db:"name" json:"name"`
+	Patterns  []string  `db:"patterns" json:"patterns"` // regex, JSON-encoded in the column
+	Fields    []string  `db:"fields" json:"fields"`     // field-name match, JSON-encoded
+	MaskChar  string    `db:"mask_char" json:"mask_char"`
+	Enabled   bool      `db:"enabled" json:"enabled"`
+	Source    string    `db:"source" json:"source"` // config | ui | llm
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
+}
+
+// RuleStore persists masking rules. It is implemented by the same backends as
+// CallStore so both share a single connection (and, for SQLite, one file lock).
+type RuleStore interface {
+	ListRules() ([]MaskRule, error)
+	GetRule(id int64) (*MaskRule, error)
+	CreateRule(r *MaskRule) error
+	UpdateRule(r *MaskRule) error
+	DeleteRule(id int64) error
+}
+
+// CallStore persists audit records.
+type CallStore interface {
 	Insert(r *CallRecord) error
 	Query(opts QueryOpts) ([]CallRecord, error)
 	Get(id int64) (*CallRecord, error)
 	Stats(opts StatsOpts) (*Stats, error)
+}
+
+// Store is the persistence interface for audit records and masking rules.
+type Store interface {
+	CallStore
+	RuleStore
 	Close() error
 }

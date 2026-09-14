@@ -6,19 +6,19 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: mcpgw
-      POSTGRES_PASSWORD: mcpgw
-      POSTGRES_DB: mcpgw
+      POSTGRES_USER: mcp_arc
+      POSTGRES_PASSWORD: mcp_arc
+      POSTGRES_DB: mcp_arc
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mcpgw -d mcpgw"]
+      test: ["CMD-SHELL", "pg_isready -U mcp_arc -d mcp_arc"]
       interval: 5s
       timeout: 5s
       retries: 10
     profiles: ["postgres"]
 
-  mcpgw:
+  mcp-arc:
     build: .
     ports:
       - "8080:8080"
@@ -27,14 +27,14 @@ services:
     # Override the upstream to point at your own MCP server.
     # Mount your upstream server into the container and adjust the command.
     command:
-      - "mcpgw"
+      - "mcp-arc"
       - "--config"
-      - "/etc/mcpgw/config.docker.yaml"
+      - "/etc/mcp-arc/config.docker.yaml"
       - "--upstream"
       - "node"
       - "/upstream/server.js"
 
-  mcpgw-postgres:
+  mcp-arc-postgres:
     build: .
     ports:
       - "8081:8080"
@@ -42,9 +42,9 @@ services:
       postgres:
         condition: service_healthy
     command:
-      - "mcpgw"
+      - "mcp-arc"
       - "--config"
-      - "/etc/mcpgw/config.docker-postgres.yaml"
+      - "/etc/mcp-arc/config.docker-postgres.yaml"
       - "--upstream"
       - "node"
       - "/upstream/server.js"
